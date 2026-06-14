@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-check:
+    runs-on: macos-14
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: swift --version
+
+      - name: Run repository checks
+        run: ./scripts/run-checks.sh
+
+      - name: Build app bundle
+        run: ./scripts/build-app.sh
+
+      - name: Validate bundle
+        run: |
+          plutil -lint dist/Maclipp.app/Contents/Info.plist
+          codesign --verify --deep --strict dist/Maclipp.app
