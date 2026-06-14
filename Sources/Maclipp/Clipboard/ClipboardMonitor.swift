@@ -19,7 +19,7 @@ final class ClipboardMonitor {
         guard timer == nil else { return }
 
         let timer = Timer(timeInterval: 0.4, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+            MainActor.assumeIsolated {
                 self?.checkPasteboard()
             }
         }
