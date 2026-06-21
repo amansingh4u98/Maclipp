@@ -11,6 +11,7 @@ final class ClipboardRepository: ObservableObject {
     private let rootURL: URL
     private let imagesURL: URL
     private let indexURL: URL
+    private let imageCache = NSCache<NSString, NSImage>()
 
     init(rootURL: URL? = nil, maximumItems: Int = 100) {
         self.maximumItems = maximumItems
@@ -94,8 +95,15 @@ final class ClipboardRepository: ObservableObject {
     }
 
     func image(for item: ClipboardItem) -> NSImage? {
-        guard let imageURL = validatedImageURL(for: item) else { return nil }
-        return NSImage(contentsOf: imageURL)
+        guard let filename = item.imageFilename else { return nil }
+        let cacheKey = filename as NSString
+        if let cached = imageCache.object(forKey: cacheKey) {
+            return cached
+        }
+        guard let imageURL = validatedImageURL(for: item),
+              let image = NSImage(contentsOf: imageURL) else { return nil }
+        imageCache.setObject(image, forKey: cacheKey)
+        return image
     }
 
     func togglePin(_ item: ClipboardItem) {
@@ -198,6 +206,9 @@ final class ClipboardRepository: ObservableObject {
     }
 
     private func deleteImageIfNeeded(for item: ClipboardItem) {
+        if let filename = item.imageFilename {
+            imageCache.removeObject(forKey: filename as NSString)
+        }
         guard let imageURL = validatedImageURL(for: item) else { return }
         try? FileManager.default.removeItem(at: imageURL)
     }
@@ -258,20 +269,20 @@ final class ClipboardRepository: ObservableObject {
 }
 
 private extension JSONEncoder {
-    static var maclipp: JSONEncoder {
+    static let maclipp: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         return encoder
-    }
+    }()
 }
 
 private extension JSONDecoder {
-    static var maclipp: JSONDecoder {
+    static let maclipp: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         return decoder
-    }
+    }()
 }
 
 private extension NSImage {

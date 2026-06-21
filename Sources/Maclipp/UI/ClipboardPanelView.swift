@@ -24,10 +24,19 @@ struct ClipboardPanelView: View {
         self.onClose = onClose
     }
 
+    // Preserve repository's sort order: pinned first, then most-recent first.
+    // (Previously re-sorted by createdAt only, silently dropping pin ordering.)
     private var filteredItems: [ClipboardItem] {
-        repository.items
-            .filter { $0.matches(query) }
-            .sorted { $0.createdAt > $1.createdAt }
+        repository.items.filter { $0.matches(query) }
+    }
+
+    private var pinnedItems: [ClipboardItem] { filteredItems.filter(\.isPinned) }
+    private var recentItems: [ClipboardItem] { filteredItems.filter { !$0.isPinned } }
+
+    private func shortcutNumber(for item: ClipboardItem) -> Int? {
+        guard let index = filteredItems.firstIndex(where: { $0.id == item.id }),
+              index < 5 else { return nil }
+        return index + 1
     }
 
     var body: some View {
@@ -40,22 +49,34 @@ struct ClipboardPanelView: View {
             } else {
                 ScrollViewReader { scrollProxy in
                     List(selection: $selection) {
-                        ForEach(Array(filteredItems.enumerated()), id: \.element.id) { index, item in
-                            ClipboardRow(
-                                item: item,
-                                image: repository.image(for: item),
-                                shortcutNumber: index < 5 ? index + 1 : nil
-                            )
-                            .tag(item.id)
-                            .id(item.id)
-                            .contentShape(Rectangle())
-                            .onTapGesture(count: 2) { onChoose(item) }
-                            .contextMenu {
-                                Button(item.isPinned ? "Unpin" : "Pin") {
-                                    repository.togglePin(item)
+                        if !pinnedItems.isEmpty {
+                            Section {
+                                ForEach(pinnedItems) { item in
+                                    row(for: item)
                                 }
-                                Button("Delete", role: .destructive) {
-                                    repository.delete(item)
+                            } header: {
+                                Label("Pinned", systemImage: "pin.fill")
+                                    .font(.caption2)
+                                    .fontWeight(.semibold)
+                                    .foregroundStyle(.secondary)
+                                    .textCase(nil)
+                                    .padding(.top, 2)
+                            }
+                        }
+
+                        if !recentItems.isEmpty {
+                            Section {
+                                ForEach(recentItems) { item in
+                                    row(for: item)
+                                }
+                            } header: {
+                                if !pinnedItems.isEmpty {
+                                    Text("Recent")
+                                        .font(.caption2)
+                                        .fontWeight(.semibold)
+                                        .foregroundStyle(.secondary)
+                                        .textCase(nil)
+                                        .padding(.top, 2)
                                 }
                             }
                         }
@@ -83,7 +104,7 @@ struct ClipboardPanelView: View {
             selection = filteredItems.first?.id
             searchIsFocused = true
         }
-        .onReceive(Just(query).removeDuplicates()) { _ in
+        .onChange(of: query) { _ in
             selection = filteredItems.first?.id
         }
         .onReceive(repository.$items) { items in
@@ -98,10 +119,32 @@ struct ClipboardPanelView: View {
         }
     }
 
+    @ViewBuilder
+    private func row(for item: ClipboardItem) -> some View {
+        ClipboardRow(
+            item: item,
+            image: repository.image(for: item),
+            shortcutNumber: shortcutNumber(for: item)
+        )
+        .tag(item.id)
+        .id(item.id)
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) { onChoose(item) }
+        .contextMenu {
+            Button(item.isPinned ? "Unpin" : "Pin") {
+                repository.togglePin(item)
+            }
+            Button("Delete", role: .destructive) {
+                repository.delete(item)
+            }
+        }
+    }
+
     private var searchBar: some View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
+                .fontWeight(.medium)
             TextField("Search clipboard history", text: $query)
                 .textFieldStyle(.plain)
                 .font(.title3)
@@ -123,27 +166,43 @@ struct ClipboardPanelView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 12) {
             Image(systemName: query.isEmpty ? "clipboard" : "magnifyingglass")
-                .font(.system(size: 32))
+                .font(.system(size: 36, weight: .light))
+                .foregroundStyle(.tertiary)
+
+            VStack(spacing: 4) {
+                Text(query.isEmpty ? "No clips yet" : "No matching clips")
+                    .font(.headline)
+                Text(
+                    query.isEmpty
+                        ? "Maclipp records text and images while it is running."
+                        : "Try a different search term."
+                )
+                .font(.subheadline)
                 .foregroundStyle(.secondary)
-            Text(query.isEmpty ? "Copy something to get started" : "No matching clips")
-                .font(.headline)
-            Text("Maclipp records text and images while it is running.")
-                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding()
     }
 
     private var footer: some View {
-        HStack {
+        HStack(spacing: 8) {
             if let error = repository.lastError ?? model.serviceError ?? model.shortcutError {
-                Label(error, systemImage: "exclamationmark.triangle")
+                Label(error, systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange)
                     .lineLimit(1)
             } else {
-                Text("\(repository.items.count) item\(repository.items.count == 1 ? "" : "s")")
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 5) {
+                    if model.isPaused {
+                        Image(systemName: "pause.circle.fill")
+                            .foregroundStyle(.orange)
+                    }
+                    Text("\(repository.items.count) clip\(repository.items.count == 1 ? "" : "s")")
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Spacer()
@@ -167,7 +226,8 @@ struct ClipboardPanelView: View {
                     NSApplication.shared.terminate(nil)
                 }
             } label: {
-                Image(systemName: "gearshape")
+                Image(systemName: "gearshape.fill")
+                    .foregroundStyle(.secondary)
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
@@ -186,16 +246,16 @@ struct ClipboardPanelView: View {
         }
 
         switch event.keyCode {
-        case 125:
+        case 125: // Down arrow
             moveSelection(by: 1)
             return true
-        case 126:
+        case 126: // Up arrow
             moveSelection(by: -1)
             return true
-        case 36, 76:
+        case 36, 76: // Return, numpad Enter
             chooseSelection()
             return true
-        case 53:
+        case 53: // Escape
             onClose()
             return true
         default:
@@ -254,45 +314,46 @@ private struct ClipboardRow: View {
     @State private var isShowingImagePreview = false
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             preview
-                .frame(width: 52, height: 42)
+                .frame(width: 44, height: 44)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text(item.displayTitle)
-                    .lineLimit(2)
-                    .font(.body)
+                    .lineLimit(1)
+                    .font(.system(size: 13, weight: .medium))
 
-                HStack(spacing: 6) {
-                    Text(item.kind == .text ? "Text" : "Image")
-                    if let sourceApplication = item.sourceApplication {
-                        Text("•")
-                        Text(sourceApplication)
+                HStack(spacing: 4) {
+                    if let source = item.sourceApplication {
+                        Text(source)
+                        Text("·")
                     }
-                    Text("•")
                     Text(item.createdAt.clipboardAge)
                 }
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.tertiary)
             }
 
             Spacer()
-            if let shortcutNumber {
-                Text("⌘\(shortcutNumber)")
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 3)
-                    .background(Color.secondary.opacity(0.12))
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
-                    .help("Copy item with Command+\(shortcutNumber)")
-            }
-            if item.isPinned {
-                Image(systemName: "pin.fill")
-                    .foregroundStyle(.secondary)
+
+            HStack(spacing: 6) {
+                if item.isPinned {
+                    Image(systemName: "pin.fill")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.orange)
+                }
+                if let n = shortcutNumber {
+                    Text("⌘\(n)")
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.12))
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                }
             }
         }
-        .padding(.vertical, 5)
+        .padding(.vertical, 4)
     }
 
     @ViewBuilder
@@ -302,10 +363,8 @@ private struct ClipboardRow: View {
                 .resizable()
                 .scaledToFit()
                 .background(Color.secondary.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .onHover { isHovering in
-                    isShowingImagePreview = isHovering
-                }
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+                .onHover { isShowingImagePreview = $0 }
                 .popover(
                     isPresented: $isShowingImagePreview,
                     attachmentAnchor: .rect(.bounds),
@@ -314,11 +373,15 @@ private struct ClipboardRow: View {
                     ImageHoverPreview(image: image)
                 }
         } else {
-            Image(systemName: "text.alignleft")
-                .font(.title2)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color.secondary.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(Color.accentColor.opacity(0.1))
+                Text(item.text ?? "")
+                    .font(.system(size: 5.5))
+                    .lineLimit(6)
+                    .foregroundStyle(Color.accentColor.opacity(0.55))
+                    .padding(5)
+            }
         }
     }
 }
@@ -331,7 +394,7 @@ private struct ImageHoverPreview: View {
             Image(nsImage: image)
                 .resizable()
                 .scaledToFit()
-                .frame(maxWidth: 420, maxHeight: 320)
+                .frame(maxWidth: 680, maxHeight: 560)
                 .background(Color.black.opacity(0.08))
                 .clipShape(RoundedRectangle(cornerRadius: 8))
 
@@ -340,7 +403,6 @@ private struct ImageHoverPreview: View {
                 .foregroundStyle(.secondary)
         }
         .padding(12)
-        .frame(width: 444, height: 360)
     }
 
     private var imageDimensions: String {
